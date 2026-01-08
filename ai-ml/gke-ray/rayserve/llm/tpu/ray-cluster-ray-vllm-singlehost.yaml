@@ -1,0 +1,123 @@
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: ray-serve-llm-tpu
+spec:
+  headGroupSpec:
+    rayStartParams: {}
+    template:
+      metadata:
+        annotations:
+          gke-gcsfuse/volumes: "true"
+          gke-gcsfuse/cpu-limit: "0"
+          gke-gcsfuse/memory-limit: "0"
+          gke-gcsfuse/ephemeral-storage-limit: "0"
+      spec:
+        serviceAccountName: $KSA_NAME
+        containers:
+        - name: ray-head
+          image: $VLLM_IMAGE
+          resources:
+            limits:
+              cpu: "2"
+              memory: 8Gi
+            requests:
+              cpu: "2"
+              memory: 8Gi
+          ports:
+          - containerPort: 6379
+            name: gcs
+          - containerPort: 8265
+            name: dashboard
+          - containerPort: 10001
+            name: client
+          - containerPort: 8000
+            name: serve
+          env:
+          - name: HUGGING_FACE_HUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: hf-secret
+                key: hf_api_token
+          - name: VLLM_XLA_CACHE_PATH
+            value: "/data"
+          volumeMounts:
+          - name: gcs-fuse-csi-ephemeral
+            mountPath: /data
+          - name: dshm
+            mountPath: /dev/shm
+        volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
+        - name: gke-gcsfuse-cache
+          emptyDir:
+            medium: Memory
+        - name: gcs-fuse-csi-ephemeral
+          csi:
+            driver: gcsfuse.csi.storage.gke.io
+            volumeAttributes:
+              bucketName: $GSBUCKET
+              mountOptions: "implicit-dirs,file-cache:enable-parallel-downloads:true,file-cache:parallel-downloads-per-file:100,file-cache:max-parallel-downloads:-1,file-cache:download-chunk-size-mb:10,file-cache:max-size-mb:-1"
+  workerGroupSpecs:
+  - replicas: 1
+    groupName: tpu-group
+    rayStartParams: {}
+    template:
+      metadata:
+        annotations:
+          gke-gcsfuse/volumes: "true"
+          gke-gcsfuse/cpu-limit: "0"
+          gke-gcsfuse/memory-limit: "0"
+          gke-gcsfuse/ephemeral-storage-limit: "0"
+      spec:
+        serviceAccountName: $KSA_NAME
+        containers:
+        - name: ray-worker
+          image: $VLLM_IMAGE
+          resources:
+            limits:
+              cpu: "16"
+              memory: 64G
+              google.com/tpu: "4"  # 4 TPU chips on single host
+              ephemeral-storage: 40G
+            requests:
+              cpu: "16"
+              memory: 64G
+              google.com/tpu: "4"
+              ephemeral-storage: 40G
+          env:
+          - name: JAX_PLATFORMS
+            value: "tpu"
+          - name: TPU_BACKEND_TYPE
+            value: "jax"
+          - name: HUGGING_FACE_HUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: hf-secret
+                key: hf_api_token
+          - name: VLLM_XLA_CACHE_PATH
+            value: "/data"
+          volumeMounts:
+          - name: gcs-fuse-csi-ephemeral
+            mountPath: /data
+          - name: dshm
+            mountPath: /dev/shm
+        volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
+        - name: gke-gcsfuse-cache
+          emptyDir:
+            medium: Memory
+        - name: gcs-fuse-csi-ephemeral
+          csi:
+            driver: gcsfuse.csi.storage.gke.io
+            volumeAttributes:
+              bucketName: $GSBUCKET
+              mountOptions: "implicit-dirs,file-cache:enable-parallel-downloads:true,file-cache:parallel-downloads-per-file:100,file-cache:max-parallel-downloads:-1,file-cache:download-chunk-size-mb:10,file-cache:max-size-mb:-1"
+        nodeSelector:
+          cloud.google.com/gke-tpu-accelerator: tpu-v5-lite-podslice
+          cloud.google.com/gke-tpu-topology: 2x2  # 4 chips on one node
