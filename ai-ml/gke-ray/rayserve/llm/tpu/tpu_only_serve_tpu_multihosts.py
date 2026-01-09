@@ -64,6 +64,7 @@ class VLLMDeployment:
             download_dir=os.environ['VLLM_XLA_CACHE_PATH'],
             tokenizer_mode=tokenizer_mode,
             enforce_eager=True,
+            distributed_executor_backend="ray",
         )
 
     @app.post("/v1/generate")
@@ -154,6 +155,6 @@ def build_app(cli_args: Dict[str, str]) -> serve.Application:
         get_tokenizer_mode(), 
         get_dtype()
     )
-    
+
 
 model = build_app({})
